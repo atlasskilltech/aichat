@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HR Chatbot - Enhanced with Context</title>
+    <style>
+        /* Keep all previous styles */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            width: 95%;
+            max-width: 1000px;
+            height: 90vh;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px 30px;
+            position: relative;
+        }
+        
+        .header h1 { font-size: 28px; margin-bottom: 5px; }
+        .header p { font-size: 14px; opacity: 0.95; }
+        
+        .context-indicator {
+            position: absolute;
+            top: 25px;
+            right: 30px;
+            padding: 6px 14px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 15px;
+            font-size: 11px;
+            display: none;
+        }
+        
+        .context-indicator.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+        
+        .examples {
+            padding: 15px 25px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        
+        .examples p { font-size: 13px; color: #666; margin-bottom: 10px; }
+        
+        .example-btn {
+            display: inline-block;
+            margin: 4px;
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .example-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .messages {
+            flex: 1;
+            padding: 25px;
+            overflow-y: auto;
+            background: #f5f7fa;
+        }
+        
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            animation: fadeIn 0.3s;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message.user { justify-content: flex-end; }
+        
+        .bubble {
+            max-width: 75%;
+            padding: 15px 20px;
+            border-radius: 18px;
+            line-height: 1.6;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+        
+        .message.user .bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .message.bot .bubble {
+            background: white;
+            color: #333;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        
+        .query-info {
+            font-size: 11px;
+            opacity: 0.6;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        .typing {
+            padding: 15px 20px;
+            background: white;
+            border-radius: 18px;
+            width: fit-content;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        
+        .typing span {
+            height: 10px;
+            width: 10px;
+            background: #999;
+            border-radius: 50%;
+            display: inline-block;
+            margin: 0 3px;
+            animation: typing 1.4s infinite;
+        }
+        
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+        
+        .input-area {
+            padding: 20px 25px;
+            background: white;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .input-wrapper { display: flex; gap: 12px; }
+        
+        input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 15px;
+            outline: none;
+            transition: all 0.3s;
+        }
+        
+        input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
+        }
+        
+        button {
+            padding: 15px 35px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102,126,234,0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 HR AI Assistant</h1>
+            <p>Enhanced with Conversation Context</p>
+            <div class="context-indicator" id="contextIndicator">
+                💭 Using context
+            </div>
+        </div>
+        
+        <div class="examples">
+            <p>💡 <strong>Try these:</strong></p>
+            <span class="example-btn" onclick="ask('How many employees do we have?')">👥 Employee count</span>
+            <span class="example-btn" onclick="ask('List them')">📋 Show list</span>
+            <span class="example-btn" onclick="ask('Aamir Khan department')">🔍 Find employee</span>
+            <span class="example-btn" onclick="ask('Show their manager')">👔 Followup</span>
+            <span class="example-btn" onclick="ask('Department statistics')">📊 Analytics</span>
+        </div>
+        
+        <div class="messages" id="messages">
+            <div class="message bot">
+                <div class="bubble">
+                    <strong>👋 Welcome! I now have conversation memory!</strong><br><br>
+                    ✅ I remember our conversation<br>
+                    ✅ I understand followup questions<br>
+                    ✅ I provide more accurate data<br><br>
+                    Try asking questions that build on each other!
+                </div>
+            </div>
+        </div>
+        
+        <div class="input-area">
+            <div class="input-wrapper">
+                <input 
+                    type="text" 
+                    id="input" 
+                    placeholder="Ask a question (I'll remember the context)..."
+                    onkeypress="handleKeyPress(event)"
+                />
+                <button id="btn" onclick="send()">Send</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let history = [];
+        let messageCount = 0;
+        
+        async function send() {
+            const input = document.getElementById('input');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            addMessage(message, 'user');
+            input.value = '';
+            messageCount++;
+            
+            // Show context indicator if we have history
+            if (history.length > 0) {
+                document.getElementById('contextIndicator').classList.add('active');
+            }
+            
+            document.getElementById('btn').disabled = true;
+            showTyping();
+            
+            try {
+                console.log('📤 Sending with history:', history.length, 'messages');
+                
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message: message,
+                        history: history 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                console.log('📥 Response:', data);
+                
+                hideTyping();
+                
+                if (data.success) {
+                    // Add to history for context
+                    history.push({
+                        role: 'user',
+                        content: message
+                    });
+                    
+                    history.push({
+                        role: 'assistant',
+                        content: data.response
+                    });
+                    
+                    // Keep only last 10 messages (5 exchanges)
+                    if (history.length > 10) {
+                        history = history.slice(-10);
+                    }
+                    
+                    // Display response
+                    let displayText = data.response;
+                    
+                    // Add query info if present
+                    if (data.sql) {
+                        displayText += `\n\n<div class="query-info">🔍 ${data.count} results | Query executed</div>`;
+                        console.log('SQL:', data.sql);
+                    }
+                    
+                    addMessage(displayText, 'bot');
+                    
+                } else if (data.error) {
+                    addMessage('❌ Error: ' + data.error, 'bot');
+                }
+                
+                document.getElementById('btn').disabled = false;
+                
+            } catch (error) {
+                hideTyping();
+                console.error('❌ Error:', error);
+                addMessage('❌ Connection error. Please try again.', 'bot');
+                document.getElementById('btn').disabled = false;
+            }
+        }
+        
+        function addMessage(text, sender) {
+            const container = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'message ' + sender;
+            
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.innerHTML = text.replace(/\n/g, '<br>');
+            
+            div.appendChild(bubble);
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function showTyping() {
+            const container = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.id = 'typing';
+            div.className = 'message bot';
+            div.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function hideTyping() {
+            const el = document.getElementById('typing');
+            if (el) el.remove();
+        }
+        
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                send();
+            }
+        }
+        
+        function ask(question) {
+            document.getElementById('input').value = question;
+            send();
+        }
+        
+        document.getElementById('input').focus();
+    </script>
+</body>
+</html>
