@@ -215,6 +215,121 @@ staff_designation: Job title/position\n\n`;
             return {};
         }
     }
+
+    // ============================================
+    // NEW: HR POLICY HANDBOOK SEARCH
+    // ============================================
+    
+    /**
+     * Search HR Policy Handbook using FULLTEXT search
+     * @param {string} query - User's search query
+     * @returns {Array} - Matching policy sections
+     */
+    async searchHRPolicy(query) {
+        try {
+            const connection = await this.getConnection();
+            
+            try {
+                // Search using FULLTEXT with natural language mode
+                const [results] = await connection.query(
+                    `SELECT 
+                        id, 
+                        page_number, 
+                        section_title,
+                        content,
+                        MATCH(content) AGAINST(? IN NATURAL LANGUAGE MODE) as relevance
+                     FROM hr_policy_content
+                     WHERE MATCH(content) AGAINST(? IN NATURAL LANGUAGE MODE)
+                     ORDER BY relevance DESC
+                     LIMIT 5`,
+                    [query, query]
+                );
+
+                console.log(`   📚 Found ${results.length} matching sections in HR Handbook`);
+
+                // Log search for analytics
+                if (results.length > 0) {
+                    await connection.query(
+                        `INSERT INTO hr_policy_searches (query, matched_results) 
+                         VALUES (?, ?)`,
+                        [query, results.length]
+                    );
+                }
+
+                return results;
+                
+            } finally {
+                connection.release();
+            }
+        } catch (error) {
+            console.error('❌ HR Policy Search Error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get a connection from the pool
+     * @returns {Promise<Connection>} - Database connection
+     */
+    async getConnection() {
+        return await pool.getConnection();
+    }
+
+    /**
+     * Get HR Policy search statistics
+     * @returns {Array} - Top searched queries
+     */
+    async getHRPolicyStats() {
+        try {
+            const [stats] = await pool.query(
+                `SELECT 
+                    query,
+                    COUNT(*) as search_count,
+                    AVG(matched_results) as avg_results,
+                    MAX(created_at) as last_searched
+                 FROM hr_policy_searches
+                 GROUP BY query
+                 ORDER BY search_count DESC
+                 LIMIT 10`
+            );
+
+            return stats;
+        } catch (error) {
+            console.error('❌ Policy Stats Error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Check if HR Policy content is loaded
+     * @returns {Object} - Status and count
+     */
+    async checkHRPolicyStatus() {
+        try {
+            const [result] = await pool.query(
+                `SELECT 
+                    COUNT(*) as total_chunks,
+                    SUM(content_length) as total_characters,
+                    MAX(page_number) as max_page
+                 FROM hr_policy_content`
+            );
+
+            const isLoaded = result[0].total_chunks > 0;
+
+            return {
+                loaded: isLoaded,
+                chunks: result[0].total_chunks,
+                characters: result[0].total_characters,
+                pages: result[0].max_page
+            };
+        } catch (error) {
+            console.error('❌ Policy Status Error:', error);
+            return {
+                loaded: false,
+                error: error.message
+            };
+        }
+    }
 }
 
 module.exports = new DatabaseService();

@@ -32,6 +32,91 @@ router.post('/chat', async (req, res) => {
         console.log('📨 New message:', message);
         console.log('🆔 Session:', req.session.chatId);
 
+        // ============================================
+        // STEP 1: CHECK FOR POLICY QUESTION FIRST!
+        // (Before calling Claude API)
+        // ============================================
+        
+        const policyCheck = checkPolicyQuestion(message);
+        
+        if (policyCheck.isPolicy) {
+            console.log(`📚 Policy question detected: ${policyCheck.reason}`);
+            console.log('📚 Searching HR Policy Handbook...');
+            
+            const policyResults = await db.searchHRPolicy(message);
+            
+            if (policyResults.length > 0) {
+                console.log(`✅ Found ${policyResults.length} relevant sections in HR Handbook`);
+                
+                // Build context from policy
+                let policyContext = '=== ATLAS SKILLTECH UNIVERSITY HR HANDBOOK ===\n\n';
+                
+                policyResults.forEach((result, index) => {
+                    policyContext += `Section ${index + 1}`;
+                    if (result.page_number) {
+                        policyContext += ` (Page ${result.page_number})`;
+                    }
+                    policyContext += `:\n${result.content}\n\n`;
+                });
+                
+                // Ask Claude to answer from policy
+                const policyMessages = [{
+                    role: 'user',
+                    content: `Answer this question based on the Atlas SkillTech University HR Handbook:
+
+Question: "${message}"
+
+${policyContext}
+
+Instructions:
+- Answer based ONLY on the HR handbook content provided above
+- Be specific and reference the section/page when relevant
+- If the handbook doesn't cover this topic, say so clearly
+- Keep answer clear, concise, and professional
+- Use bullet points for lists or multiple items
+- Be helpful and friendly`
+                }];
+                
+                console.log('🤖 Getting answer from HR Handbook...');
+                const policyResponse = await claude.ask(
+                    policyMessages, 
+                    'You are an HR assistant for Atlas SkillTech University. Answer based on the provided handbook content.'
+                );
+                
+                const policyAnswer = policyResponse.error 
+                    ? 'Error retrieving policy information' 
+                    : policyResponse.text;
+                
+                console.log('✅ Policy answer received');
+                
+                // Save to chat logs
+                await db.saveChat(
+                    req.session.chatId, 
+                    message, 
+                    policyAnswer, 
+                    null
+                );
+                
+                // Return policy-based answer
+                return res.json({
+                    success: true,
+                    response: policyAnswer,
+                    isPolicyAnswer: true,
+                    source: '📄 Atlas SkillTech HR Handbook',
+                    policyPages: policyResults.map(r => r.page_number).filter(p => p)
+                });
+            } else {
+                console.log('⚠️ No relevant policy content found in handbook');
+                // Fall through to normal Claude processing
+            }
+        } else {
+            console.log(`🔍 Not a policy question: ${policyCheck.reason}`);
+        }
+
+        // ============================================
+        // STEP 2: NORMAL PROCESSING (Database queries)
+        // ============================================
+
         // Get enhanced schema with context
         const schemaContext = await db.getEnhancedSchema();
 
@@ -108,9 +193,6 @@ Response: {"sql":"SELECT staff_first_name, staff_last_name, staff_designation FR
 
 User: "Show Aamir Khan's details"
 Response: {"sql":"SELECT ds.*, dsd.staff_department_name FROM dice_staff ds LEFT JOIN dice_staff_department dsd ON ds.staff_department = dsd.staff_department_id WHERE ds.staff_first_name='Aamir' AND ds.staff_last_name='Khan'"}
-
-User: "What's the leave policy?"
-Response: "The standard leave policy typically includes 20 days of annual leave..."
 
 ⚠️ CRITICAL: For database queries, return ONLY the JSON!`;
 
@@ -326,6 +408,140 @@ Instructions:
         });
     }
 });
+
+// ============================================
+// HELPER FUNCTION: CHECK POLICY QUESTION
+// This runs BEFORE calling Claude API
+// ============================================
+
+function checkPolicyQuestion(message) {
+    const lowerMsg = message.toLowerCase();
+    
+    // EXPLICIT POLICY KEYWORDS - these are clearly policy questions
+    const explicitPolicyKeywords = [
+        'leave policy',
+        'attendance policy', 
+        'dress code policy',
+        'dress code',
+        'code of conduct',
+        'probation policy',
+        'confirmation policy',
+        'appraisal policy',
+        'performance policy',
+        'review policy',
+        'travel policy',
+        'benefits policy',
+        'welfare policy',
+        'employee handbook',
+        'hr handbook',
+        'hr policy',
+        'company policy',
+        'work from home policy',
+        'wfh policy',
+        'holiday policy',
+        'salary policy',
+        'increment policy',
+        'bonus policy',
+        'grievance policy',
+        'separation policy',
+        'retirement policy',
+        'notice period policy'
+    ];
+    
+    // Check explicit keywords first
+    for (const keyword of explicitPolicyKeywords) {
+        if (lowerMsg.includes(keyword)) {
+            return {
+                isPolicy: true,
+                reason: `Contains explicit policy keyword: "${keyword}"`
+            };
+        }
+    }
+    
+    // POLICY QUESTION PHRASES
+    const policyPhrases = [
+        'what is the policy',
+        'what are the rules',
+        'what is the procedure',
+        'what are the procedures',
+        'explain the policy',
+        'tell me about the policy',
+        'what are the guidelines',
+        'how does the policy work',
+        'policy regarding',
+        'rules regarding',
+        'rules for',
+        'guidelines for',
+        'procedure for',
+        'what are my benefits',
+        'what benefits do i get',
+        'what benefits am i entitled',
+        'how many days of leave am i entitled',
+        'how many days of leave do i get',
+        'how many days of leave can i',
+        'what is my leave entitlement',
+        'am i allowed to',
+        'can i take',
+        'what is the notice period',
+        'what is the probation period',
+        'how long is probation',
+        'how long is notice period'
+    ];
+    
+    // Check policy phrases
+    for (const phrase of policyPhrases) {
+        if (lowerMsg.includes(phrase)) {
+            return {
+                isPolicy: true,
+                reason: `Contains policy phrase: "${phrase}"`
+            };
+        }
+    }
+    
+    // DATA REQUEST INDICATORS - these mean it's NOT a policy question
+    const dataIndicators = [
+        'show me',
+        'display',
+        'list all',
+        'list the',
+        'get me',
+        'find',
+        'search for',
+        'report for',
+        'report of',
+        "'s report", // possessive + report
+        "'s leave", // possessive + leave
+        "'s attendance",
+        "'s details",
+        "'s records",
+        "'s history",
+        'how many employees',
+        'how many staff',
+        'count of',
+        'total number',
+        'who took',
+        'who has',
+        'which employees',
+        'employees who',
+        'staff who'
+    ];
+    
+    // If contains data indicators, it's NOT policy
+    for (const indicator of dataIndicators) {
+        if (lowerMsg.includes(indicator)) {
+            return {
+                isPolicy: false,
+                reason: `Contains data indicator: "${indicator}"`
+            };
+        }
+    }
+    
+    // Default: not a policy question
+    return {
+        isPolicy: false,
+        reason: 'No policy keywords or phrases detected'
+    };
+}
 
 // Enhanced fallback formatter
 function formatFallback(data, totalCount, question) {
