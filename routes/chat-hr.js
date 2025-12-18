@@ -3,10 +3,16 @@ const router = express.Router();
 const claude = require('../services/claude');
 const db = require('../services/database');
 
-router.post('/chat', async (req, res) => {
-    try {
-        const { message, history = [] } = req.body;
+// ============================================
+// HR CHAT ROUTE
+// HR has FULL ACCESS to all data + HR policies
+// ============================================
 
+router.post('/chat/hr', async (req, res) => {
+    try {
+        const { message, history = [], hrId, hrEmail } = req.body;
+
+        // Validation
         if (!message || !message.trim()) {
             return res.status(400).json({ 
                 success: false, 
@@ -14,41 +20,48 @@ router.post('/chat', async (req, res) => {
             });
         }
 
-        // Initialize session
-        if (!req.session.chatId) {
-            req.session.chatId = 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        if (!hrId && !hrEmail) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'HR ID or Email is required for authentication' 
+            });
         }
 
-        // Initialize conversation context in session
+        // Initialize session
+        if (!req.session.chatId) {
+            req.session.chatId = 'chat_hr_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+
         if (!req.session.conversationContext) {
             req.session.conversationContext = {
                 previousQueries: [],
                 previousResults: [],
                 topics: [],
-                userPreferences: {}
+                userPreferences: {},
+                role: 'hr',
+                hrId: hrId,
+                hrEmail: hrEmail
             };
         }
 
-        console.log('📨 New message:', message);
-        console.log('🆔 Session:', req.session.chatId);
+        console.log('🏢 HR Chat:', message);
+        console.log('🆔 HR ID:', hrId);
+        console.log('✅ Access Level: FULL ACCESS');
 
         // ============================================
-        // STEP 1: CHECK FOR POLICY QUESTION FIRST!
-        // (Before calling Claude API)
+        // STEP 1: CHECK FOR POLICY QUESTION
         // ============================================
         
         const policyCheck = checkPolicyQuestion(message);
         
         if (policyCheck.isPolicy) {
-            console.log(`📚 Policy question detected: ${policyCheck.reason}`);
-            console.log('📚 Searching HR Policy Handbook...');
+            console.log('📚 Policy question detected');
             
             const policyResults = await db.searchHRPolicy(message);
             
             if (policyResults.length > 0) {
-                console.log(`✅ Found ${policyResults.length} relevant sections in HR Handbook`);
+                console.log(`✅ Found ${policyResults.length} sections in HR Handbook`);
                 
-                // Build context from policy
                 let policyContext = '=== ATLAS SKILLTECH UNIVERSITY HR HANDBOOK ===\n\n';
                 
                 policyResults.forEach((result, index) => {
@@ -59,7 +72,6 @@ router.post('/chat', async (req, res) => {
                     policyContext += `:\n${result.content}\n\n`;
                 });
                 
-                // Ask Claude to answer from policy
                 const policyMessages = [{
                     role: 'user',
                     content: `Answer this question based on the Atlas SkillTech University HR Handbook:
@@ -69,77 +81,52 @@ Question: "${message}"
 ${policyContext}
 
 Instructions:
-- Answer based ONLY on the HR handbook content provided above
-- Be specific and reference the section/page when relevant
-- If the handbook doesn't cover this topic, say so clearly
-- Keep answer clear, concise, and professional
-- Use bullet points for lists or multiple items
-- Be helpful and friendly`
+- Answer based ONLY on the HR handbook content provided
+- Be specific and reference sections/pages
+- Keep answer clear and professional
+- Use bullet points for lists`
                 }];
                 
-                console.log('🤖 Getting answer from HR Handbook...');
                 const policyResponse = await claude.ask(
                     policyMessages, 
-                    'You are an HR assistant for Atlas SkillTech University. Answer based on the provided handbook content.'
+                    'You are an HR assistant. Answer based on the handbook.'
                 );
                 
                 const policyAnswer = policyResponse.error 
                     ? 'Error retrieving policy information' 
                     : policyResponse.text;
                 
-                console.log('✅ Policy answer received');
+                await db.saveChat(req.session.chatId, message, policyAnswer, null);
                 
-                // Save to chat logs
-                await db.saveChat(
-                    req.session.chatId, 
-                    message, 
-                    policyAnswer, 
-                    null
-                );
-                
-                // Return policy-based answer
                 return res.json({
                     success: true,
                     response: policyAnswer,
                     isPolicyAnswer: true,
                     source: '📄 Atlas SkillTech HR Handbook',
-                    policyPages: policyResults.map(r => r.page_number).filter(p => p)
+                    accessLevel: 'hr'
                 });
-            } else {
-                console.log('⚠️ No relevant policy content found in handbook');
-                // Fall through to normal Claude processing
             }
-        } else {
-            console.log(`🔍 Not a policy question: ${policyCheck.reason}`);
         }
 
         // ============================================
-        // STEP 2: NORMAL PROCESSING (Database queries)
+        // STEP 2: PROCESS DATA QUERIES (FULL ACCESS)
         // ============================================
 
-        // Get enhanced schema with context
         const schemaContext = await db.getEnhancedSchema();
-
-        // Build conversation messages with history
         const messages = [];
-
-        // Add recent history (last 6 messages for context)
         const recentHistory = history.slice(-6);
         
         if (recentHistory.length > 0) {
-            console.log(`📚 Including ${recentHistory.length} previous messages for context`);
+            console.log(`📚 Including ${recentHistory.length} previous messages`);
             messages.push(...recentHistory);
         }
 
-        // Add previous queries context (if any)
         const previousQueriesContext = req.session.conversationContext.previousQueries
             .slice(-3)
             .map(q => `Previous query: "${q.question}" → Result: ${q.rowCount} rows`)
             .join('\n');
 
-        // Build enhanced user message with context
         let enhancedMessage = message.trim();
-        
         if (previousQueriesContext) {
             enhancedMessage = `Context from conversation:\n${previousQueriesContext}\n\nCurrent question: ${message}`;
         }
@@ -149,11 +136,17 @@ Instructions:
             content: enhancedMessage
         });
 
-        // ENHANCED SYSTEM PROMPT with more context
+        // HR-SPECIFIC SYSTEM PROMPT (FULL ACCESS)
         const systemPrompt = `${schemaContext}
 
 === YOUR ROLE ===
-You are an intelligent HR database assistant with memory of the conversation.
+You are an HR database assistant for HR PERSONNEL with FULL ACCESS.
+
+=== ACCESS PERMISSIONS ===
+✅ HR ID: ${hrId}
+✅ Access Level: FULL ACCESS TO ALL DATA
+✅ Can view: ALL staff members, ALL departments, ALL records
+✅ No restrictions on data access
 
 === RESPONSE RULES ===
 
@@ -162,14 +155,11 @@ If user needs DATABASE DATA:
 → Consider previous conversation context
 → Use appropriate JOINs based on relationships
 → Apply filters intelligently
-
-If user asks GENERAL QUESTION or FOLLOWUP:
-→ Return helpful text answer
-→ Use context from previous queries
+→ NO ACCESS RESTRICTIONS - HR can see everything
 
 === IMPORTANT CONTEXT HANDLING ===
 
-1. If user says "show more", "tell me more", "what about..." → Check previous context
+1. If user says "show more", "tell me more" → Check previous context
 2. If user refers to previous results → Use that context
 3. If user asks followup questions → Build on previous query
 4. Use proper column names and relationships from schema
@@ -178,7 +168,7 @@ If user asks GENERAL QUESTION or FOLLOWUP:
 
 1. Use meaningful column aliases (as total_count, as department_name)
 2. Join tables when needed for complete information
-3. Add WHERE clauses for filtering
+3. Add WHERE clauses for filtering (but no access restrictions)
 4. Use GROUP BY for aggregations
 5. Order results logically (ORDER BY)
 6. Limit results if needed (but don't by default)
@@ -188,15 +178,18 @@ If user asks GENERAL QUESTION or FOLLOWUP:
 User: "How many employees?"
 Response: {"sql":"SELECT COUNT(*) as total_employees FROM dice_staff WHERE staff_status='active'"}
 
-User: "List them"  [referring to previous query]
-Response: {"sql":"SELECT staff_first_name, staff_last_name, staff_designation FROM dice_staff WHERE staff_status='active' ORDER BY staff_first_name"}
+User: "Show Aamir's leave records"
+Response: {"sql":"SELECT dsl.*, ds.staff_first_name, ds.staff_last_name FROM dice_staff_leave dsl LEFT JOIN dice_staff ds ON dsl.staff_id = ds.staff_id WHERE ds.staff_first_name='Aamir' ORDER BY dsl.staff_leave_start_date DESC"}
 
-User: "Show Aamir Khan's details"
-Response: {"sql":"SELECT ds.*, dsd.staff_department_name FROM dice_staff ds LEFT JOIN dice_staff_department dsd ON ds.staff_department = dsd.staff_department_id WHERE ds.staff_first_name='Aamir' AND ds.staff_last_name='Khan'"}
+User: "Department wise attendance summary"
+Response: {"sql":"SELECT dsd.staff_department_name, COUNT(dsa.id) as attendance_count, COUNT(DISTINCT dsa.staff_id) as unique_staff FROM dice_staff_attendance dsa LEFT JOIN dice_staff ds ON dsa.staff_id = ds.staff_id LEFT JOIN dice_staff_department dsd ON ds.staff_department = dsd.staff_department_id GROUP BY dsd.staff_department_name ORDER BY attendance_count DESC"}
+
+User: "All pending leave requests"
+Response: {"sql":"SELECT dsl.*, ds.staff_first_name, ds.staff_last_name, ds.staff_email FROM dice_staff_leave dsl LEFT JOIN dice_staff ds ON dsl.staff_id = ds.staff_id WHERE dsl.staff_leave_status = 'pending' ORDER BY dsl.created_at DESC"}
 
 ⚠️ CRITICAL: For database queries, return ONLY the JSON!`;
 
-        console.log('🤖 Calling Claude API with enhanced context...');
+        console.log('🤖 Calling Claude API (HR Full Access)...');
         const response = await claude.ask(messages, systemPrompt);
 
         if (response.error) {
@@ -272,8 +265,8 @@ Response: {"sql":"SELECT ds.*, dsd.staff_department_name FROM dice_staff ds LEFT
             
             sql = jsonData.sql.replace(/\s+/g, ' ').trim();
             
-            console.log('🔍 SQL query:', sql.substring(0, 150) + '...');
-            console.log('⚙️ Executing query...');
+            console.log('🔍 HR SQL:', sql.substring(0, 150) + '...');
+            console.log('⚙️ Executing query (Full Access)...');
             
             const result = await db.executeQuery(sql);
 
@@ -318,7 +311,8 @@ Response: {"sql":"SELECT ds.*, dsd.staff_department_name FROM dice_staff ds LEFT
                     success: true,
                     response: noResultsMsg,
                     count: 0,
-                    sql: sql
+                    sql: sql,
+                    accessLevel: 'hr'
                 });
             }
 
@@ -383,6 +377,7 @@ Instructions:
                 response: finalAnswer,
                 count: result.count,
                 sql: sql,
+                accessLevel: 'hr',
                 context: {
                     hasHistory: recentHistory.length > 0,
                     previousQueries: req.session.conversationContext.previousQueries.length
@@ -397,11 +392,12 @@ Instructions:
 
         return res.json({
             success: true,
-            response: answer
+            response: answer,
+            accessLevel: 'hr'
         });
 
     } catch (error) {
-        console.error('❌ Error:', error);
+        console.error('❌ HR Chat Error:', error);
         return res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -409,139 +405,34 @@ Instructions:
     }
 });
 
-// ============================================
-// HELPER FUNCTION: CHECK POLICY QUESTION
-// This runs BEFORE calling Claude API
-// ============================================
-
+// Helper functions
 function checkPolicyQuestion(message) {
     const lowerMsg = message.toLowerCase();
     
-    // EXPLICIT POLICY KEYWORDS - these are clearly policy questions
     const explicitPolicyKeywords = [
-        'leave policy',
-        'attendance policy', 
-        'dress code policy',
-        'dress code',
-        'code of conduct',
-        'probation policy',
-        'confirmation policy',
-        'appraisal policy',
-        'performance policy',
-        'review policy',
-        'travel policy',
-        'benefits policy',
-        'welfare policy',
-        'employee handbook',
-        'hr handbook',
-        'hr policy',
-        'company policy',
-        'work from home policy',
-        'wfh policy',
-        'holiday policy',
-        'salary policy',
-        'increment policy',
-        'bonus policy',
-        'grievance policy',
-        'separation policy',
-        'retirement policy',
-        'notice period policy',
-        'notice period policy'
+        'leave policy', 'attendance policy', 'dress code', 'code of conduct',
+        'probation policy', 'appraisal policy', 'performance policy',
+        'travel policy', 'benefits policy', 'employee handbook', 'hr handbook'
     ];
     
-    // Check explicit keywords first
     for (const keyword of explicitPolicyKeywords) {
         if (lowerMsg.includes(keyword)) {
-            return {
-                isPolicy: true,
-                reason: `Contains explicit policy keyword: "${keyword}"`
-            };
+            return { isPolicy: true, reason: keyword };
         }
     }
     
-    // POLICY QUESTION PHRASES
     const policyPhrases = [
-        'what is the policy',
-        'what are the rules',
-        'what is the procedure',
-        'what are the procedures',
-        'explain the policy',
-        'tell me about the policy',
-        'what are the guidelines',
-        'how does the policy work',
-        'policy regarding',
-        'rules regarding',
-        'rules for',
-        'guidelines for',
-        'procedure for',
-        'what are my benefits',
-        'what benefits do i get',
-        'what benefits am i entitled',
-        'how many days of leave am i entitled',
-        'how many days of leave do i get',
-        'how many days of leave can i',
-        'what is my leave entitlement',
-        'am i allowed to',
-        'can i take',
-        'what is the notice period',
-        'what is the probation period',
-        'how long is probation',
-        'how long is notice period'
+        'what is the policy', 'what are the rules', 'explain the policy',
+        'what are my benefits', 'how many days of leave do i get'
     ];
     
-    // Check policy phrases
     for (const phrase of policyPhrases) {
         if (lowerMsg.includes(phrase)) {
-            return {
-                isPolicy: true,
-                reason: `Contains policy phrase: "${phrase}"`
-            };
+            return { isPolicy: true, reason: phrase };
         }
     }
     
-    // DATA REQUEST INDICATORS - these mean it's NOT a policy question
-    const dataIndicators = [
-        'show me',
-        'display',
-        'list all',
-        'list the',
-        'get me',
-        'find',
-        'search for',
-        'report for',
-        'report of',
-        "'s report", // possessive + report
-        "'s leave", // possessive + leave
-        "'s attendance",
-        "'s details",
-        "'s records",
-        "'s history",
-        'how many employees',
-        'how many staff',
-        'count of',
-        'total number',
-        'who took',
-        'who has',
-        'which employees',
-        'employees who',
-        'staff who'
-    ];
-    
-    // If contains data indicators, it's NOT policy
-    for (const indicator of dataIndicators) {
-        if (lowerMsg.includes(indicator)) {
-            return {
-                isPolicy: false,
-                reason: `Contains data indicator: "${indicator}"`
-            };
-        }
-    }
-    
-    // Default: not a policy question
-    return {
-        isPolicy: false,
-        reason: 'No policy keywords or phrases detected'
-    };
+    return { isPolicy: false };
 }
 
 // Enhanced fallback formatter

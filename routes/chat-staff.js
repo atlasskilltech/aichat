@@ -3,7 +3,7 @@ const router = express.Router();
 const claude = require('../services/claude');
 const db = require('../services/database');
 
-router.post('/chat', async (req, res) => {
+router.post('/staff', async (req, res) => {
     try {
         const { message, history = [] } = req.body;
 

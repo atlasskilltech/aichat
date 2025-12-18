@@ -7,6 +7,10 @@ const chatRoutes = require('./routes/chat');
 const adminRoutes = require('./routes/admin');
 // const testRoutes = require('./routes/test');
 
+const chatStaffRoute = require('./routes/chat-staff');
+const chatManagerRoute = require('./routes/chat-manager');
+const chatHRRoute = require('./routes/chat-hr');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -39,6 +43,10 @@ app.use((req, res, next) => {
 app.use('/api', chatRoutes);
 app.use('/api/admin', adminRoutes);
 // app.use('/api/test', testRoutes);
+
+app.use('/api', chatStaffRoute);
+app.use('/api', chatManagerRoute);
+app.use('/api', chatHRRoute);
 
 // Health check
 app.get('/api/health', (req, res) => {
