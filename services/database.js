@@ -14,7 +14,7 @@ class DatabaseService {
             }
 
             let schema = '=== DATABASE SCHEMA WITH CONTEXT ===\n\n';
-
+            schema += `staff_active = 0  is Active  staff_active = 1 is In Active \n`;
             // Add table details with sample data
             for (const table of tables) {
                 schema += `TABLE: ${table.table_name}\n`;
