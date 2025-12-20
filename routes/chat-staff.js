@@ -367,6 +367,24 @@ Response: {"sql":"SELECT ds.*, dsd.staff_department_name FROM dice_staff ds LEFT
 
 Original Question: "${message}"
 
+=== 🔴 MANDATORY STAFF STATUS RULE (VERY IMPORTANT) ===
+
+• staff_active = 0  → ACTIVE 
+• staff_active = 1  → INACTIVE 
+
+RULES:
+1. If user says "employees", "staff", "members", "working staff", etc.
+   → ALWAYS add: WHERE staff_active = 0
+
+2. If user explicitly asks for "inactive", "left", "resigned", "disabled"
+   → Use: WHERE staff_active = 1
+
+3. If user asks for "all staff"
+   → DO NOT apply staff_active filter
+
+4. NEVER assume the reverse meaning of staff_active
+5. This rule OVERRIDES all assumptions
+
 Query Executed: ${sql}
 
 Results (showing ${dataLimited.length} of ${result.count} total):

@@ -5,12 +5,19 @@ const db = require('../services/database');
 
 router.post('/manager', async (req, res) => {
     try {
-        const { message, history = [] } = req.body;
+        const { message,staffId, history = [] } = req.body;
 
         if (!message || !message.trim()) {
             return res.status(400).json({ 
                 success: false, 
                 error: 'Message is required' 
+            });
+        }
+
+        if (!staffId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Staff is required' 
             });
         }
 
@@ -28,6 +35,30 @@ router.post('/manager', async (req, res) => {
                 userPreferences: {}
             };
         }
+
+        const managerId = staffId;
+
+// Fetch manager + team staff IDs
+const staffIdQuery = `
+    SELECT GROUP_CONCAT(staff_id) AS staff_ids
+    FROM dice_staff
+    WHERE staff_active = 0
+      AND (staff_id = ${managerId} OR staff_head = ${managerId})
+`;
+
+const staffIdResult = await db.executeQuery(staffIdQuery);
+
+if (!staffIdResult.success || !staffIdResult.data[0].staff_ids) {
+    return res.status(403).json({
+        success: false,
+        error: 'No accessible staff found for this manager'
+    });
+}
+
+// Convert "120,184,191" → "120,184,191"
+const allowedStaffIds = staffIdResult.data[0].staff_ids;
+
+console.log('🔐 Manager access staff IDs:', allowedStaffIds);
 
         console.log('📨 New message:', message);
         console.log('🆔 Session:', req.session.chatId);
@@ -153,7 +184,35 @@ Instructions:
         const systemPrompt = `${schemaContext}
 
 === YOUR ROLE ===
-You are an intelligent HR database assistant with memory of the conversation.
+You are an intelligent HR database assistant acting for a MANAGER / STAFF_HEAD.
+
+You do NOT decide access yourself.
+You ONLY use staff IDs explicitly provided by the backend.
+
+${staffId} is a trusted backend-controlled list that includes:
+• The manager’s own staff_id
+• All staff_ids of their authorized team members
+
+=== 🔐 MANDATORY ACCESS CONTROL (CRITICAL) ===
+
+• EVERY database query MUST include:
+  WHERE staff_head IN (${staffId}) 
+
+• This rule is ABSOLUTE and applies to:
+  - SELECT queries
+  - JOIN queries
+  - Aggregations (COUNT, SUM, etc.)
+  - Date-based reports
+  - Attendance, leave, payroll, or any HR data
+
+• NEVER:
+  - Return data outside ${staffId}
+  - Guess or infer team members
+  - Use staff_head or reporting_manager_id in SQL
+  - Remove or bypass the staff_id filter
+
+If a query cannot be safely restricted using staff_id IN (${staffId}),
+DO NOT return SQL.
 
 === RESPONSE RULES ===
 
@@ -333,6 +392,24 @@ Response: {"sql":"SELECT ds.*, dsd.staff_department_name FROM dice_staff ds LEFT
                 content: `Format these database results naturally and professionally:
 
 Original Question: "${message}"
+
+=== 🔴 MANDATORY STAFF STATUS RULE (VERY IMPORTANT) ===
+
+• staff_active = 0  → ACTIVE 
+• staff_active = 1  → INACTIVE 
+
+RULES:
+1. If user says "employees", "staff", "members", "working staff", etc.
+   → ALWAYS add: WHERE staff_active = 0
+
+2. If user explicitly asks for "inactive", "left", "resigned", "disabled"
+   → Use: WHERE staff_active = 1
+
+3. If user asks for "all staff"
+   → DO NOT apply staff_active filter
+
+4. NEVER assume the reverse meaning of staff_active
+5. This rule OVERRIDES all assumptions
 
 Query Executed: ${sql}
 
